@@ -1,0 +1,7 @@
+# MATLAB / Simulink
+slprj/
+*.slxc
+*.asv
+*.mex*
+*.log
+.DS_Store
