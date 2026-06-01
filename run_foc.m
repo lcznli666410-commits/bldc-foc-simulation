@@ -1,42 +1,43 @@
 %% =========================================================================
-%  BLDC FOC控制 - 快速启动脚本
-%  =========================================================================
-%  此脚本提供两种仿真模式:
-%  1. 纯MATLAB脚本仿真 (不需要Simulink)
-%  2. Simulink模型仿真
+%  BLDC FOC + SMO quick launcher
 %  =========================================================================
 
 clear; clc; close all;
 
 fprintf('============================================\n');
-fprintf('  BLDC电机 FOC矢量控制仿真系统\n');
-fprintf('  ==========================================\n');
-fprintf('  请选择运行模式:\n');
-fprintf('    1 - 纯MATLAB脚本仿真 (推荐，无需Simulink)\n');
-fprintf('    2 - 构建并运行Simulink模型\n');
-fprintf('    3 - 仅构建Simulink模型 (不运行)\n');
+fprintf('  BLDC FOC + SMO simulation system\n');
+fprintf('============================================\n');
+fprintf('  Select run mode:\n');
+fprintf('    1 - MATLAB script simulation with SMO\n');
+fprintf('    2 - Build modular Simulink model and run it\n');
+fprintf('    3 - Build modular Simulink model only\n');
+fprintf('    4 - Build/run modular Simulink model and export waveforms\n');
 fprintf('============================================\n');
 
-mode = input('请输入选择 (1/2/3): ');
+mode = input('Input selection (1/2/3/4): ');
 
 switch mode
     case 1
-        fprintf('\n>> 启动纯MATLAB FOC仿真...\n\n');
+        fprintf('\n>> Running MATLAB FOC simulation with SMO...\n\n');
         foc_simulation;
-        
+
     case 2
-        fprintf('\n>> 构建Simulink模型并运行仿真...\n\n');
+        fprintf('\n>> Building Simulink model...\n\n');
         build_simulink_model;
-        fprintf('\n>> 运行仿真...\n');
-        sim('BLDC_FOC_Model');
-        fprintf('仿真完成！请查看Scope窗口\n');
-        
+        fprintf('\n>> Running Simulink model: %s\n', modelName);
+        sim(modelName);
+        fprintf('Simulation completed. Check scopes and foc_data.\n');
+
     case 3
-        fprintf('\n>> 仅构建Simulink模型...\n\n');
+        fprintf('\n>> Building Simulink model only...\n\n');
         build_simulink_model;
-        fprintf('\n模型已创建，可通过以下命令打开:\n');
-        fprintf('  open_system(''BLDC_FOC_Model'')\n');
-        
+        fprintf('\nModel created: %s.slx\n', modelName);
+        fprintf('Open with: open_system(''%s'')\n', modelName);
+
+    case 4
+        fprintf('\n>> Running modular Simulink validation with waveform export...\n\n');
+        run_modular_foc_validation;
+
     otherwise
-        fprintf('无效选择!\n');
+        fprintf('Invalid selection.\n');
 end

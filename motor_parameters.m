@@ -56,12 +56,21 @@ pid_speed.Kd = 0;        % 微分增益
 pid_speed.max = motor.max_current;   % 输出限幅 (iq参考值)
 pid_speed.min = -motor.max_current;
 
+%% SMO滑膜观测器参数
+smo.Kslide = 30;                % 滑膜增益 [V]
+smo.boundary = 0.2;             % 饱和边界层 [A]
+smo.emf_lpf_cutoff = 2000;      % 反电动势低通截止角频率 [rad/s]
+smo.speed_lpf_cutoff = 500;     % 估计速度低通截止角频率 [rad/s]
+smo.min_emf = 0.05;             % 低速反电动势门限 [V]
+smo.enable_time = 0.02;         % 允许使用SMO反馈的时间 [s]
+
 %% 仿真参数
 sim_params.Ts = 1e-6;            % 仿真步长 [s]
 sim_params.Tend = 0.5;           % 仿真结束时间 [s]
 sim_params.speed_ref = 1000;     % 速度参考值 [rpm]
 sim_params.load_time = 0.3;      % 加载负载时间 [s]
 sim_params.load_torque = 0.1;    % 负载转矩 [Nm]
+sim_params.use_smo_feedback = true;   % true时使用SMO估计角度/速度闭环
 
 %% 显示参数信息
 fprintf('============================================\n');

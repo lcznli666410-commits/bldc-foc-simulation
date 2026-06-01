@@ -11,7 +11,8 @@
 clear; clc; close all;
 
 %% 添加函数路径
-addpath('foc_functions');
+projectRoot = fileparts(mfilename('fullpath'));
+addpath(fullfile(projectRoot, 'foc_functions'));
 
 %% 加载电机参数
 motor_parameters;
@@ -58,6 +59,11 @@ data.speed_ref = zeros(1, N_store);
 data.Te        = zeros(1, N_store);
 data.TL        = zeros(1, N_store);
 data.theta_e   = zeros(1, N_store);
+data.theta_smo = zeros(1, N_store);
+data.speed_smo = zeros(1, N_store);
+data.theta_err_smo = zeros(1, N_store);
+data.e_alpha_smo = zeros(1, N_store);
+data.e_beta_smo = zeros(1, N_store);
 data.sector    = zeros(1, N_store);
 data.duty_a    = zeros(1, N_store);
 data.duty_b    = zeros(1, N_store);
@@ -76,6 +82,19 @@ speed_counter = 0;
 vd_out = 0;
 vq_out = 0;
 iq_ref = 0;
+
+% SMO observer state
+smo_state.i_alpha_hat = 0;
+smo_state.i_beta_hat = 0;
+smo_state.e_alpha_hat = 0;
+smo_state.e_beta_hat = 0;
+smo_state.theta_hat = 0;
+smo_state.omega_e_hat = 0;
+theta_smo = 0;
+omega_e_smo = 0;
+e_alpha_smo = 0;
+e_beta_smo = 0;
+theta_err_smo = 0;
 
 fprintf('开始仿真...\n');
 fprintf('仿真步数: %d, 步长: %.2e s, 总时间: %.3f s\n', N, dt, Tend);
@@ -102,19 +121,27 @@ for k = 1:N
     else
         speed_ref_current = speed_ref_rad;
     end
+
+    if sim_params.use_smo_feedback && current_time >= smo.enable_time
+        theta_ctrl = theta_smo;
+        omega_m_ctrl = omega_e_smo / motor.pole_pairs;
+    else
+        theta_ctrl = theta_e;
+        omega_m_ctrl = omega_m;
+    end
     
     %% ============== FOC控制算法 ==============
     
     % --- 电流采样 (Clarke + Park) ---
     [i_alpha, i_beta] = clarke_transform(ia, ib, ic);
-    [id_fb, iq_fb] = park_transform(i_alpha, i_beta, theta_e);
+    [id_fb, iq_fb] = park_transform(i_alpha, i_beta, theta_ctrl);
     
     % --- 速度环 (低速率) ---
     speed_counter = speed_counter + dt;
     if speed_counter >= Ts_speed
         speed_counter = 0;
         
-        speed_error = speed_ref_current - omega_m;
+        speed_error = speed_ref_current - omega_m_ctrl;
         [iq_ref, int_speed] = pi_controller(speed_error, ...
             pid_speed.Kp, pid_speed.Ki, Ts_speed, int_speed, ...
             pid_speed.max, pid_speed.min);
@@ -138,7 +165,7 @@ for k = 1:N
             pid_iq.max, pid_iq.min);
         
         % 前馈解耦 (可选，提高动态响应)
-        omega_e = omega_m * motor.pole_pairs;
+        omega_e = omega_m_ctrl * motor.pole_pairs;
         vd_out = vd_out - omega_e * motor.Lq * iq_fb;
         vq_out = vq_out + omega_e * motor.Ld * id_fb + omega_e * motor.flux;
         
@@ -153,7 +180,7 @@ for k = 1:N
     
     %% ============== 反变换与SVPWM ==============
     % 反Park变换
-    [v_alpha, v_beta] = inv_park_transform(vd_out, vq_out, theta_e);
+    [v_alpha, v_beta] = inv_park_transform(vd_out, vq_out, theta_ctrl);
     
     % SVPWM生成PWM占空比
     [duty_a, duty_b, duty_c, sector] = svpwm(v_alpha, v_beta, motor.Vdc);
@@ -166,6 +193,13 @@ for k = 1:N
     %% ============== 电机模型更新 ==============
     [ia, ib, ic, theta_e, omega_m, Te, omega_e] = bldc_motor_model(...
         va, vb, vc, TL, ia, ib, ic, omega_m, theta_e, motor, dt);
+
+    [v_alpha_applied, v_beta_applied] = clarke_transform(va, vb, vc);
+    [i_alpha_meas, i_beta_meas] = clarke_transform(ia, ib, ic);
+    [smo_state, theta_smo, omega_e_smo, e_alpha_smo, e_beta_smo] = smo_observer(...
+        v_alpha_applied, v_beta_applied, i_alpha_meas, i_beta_meas, ...
+        smo_state, motor, smo, dt);
+    theta_err_smo = atan2(sin(theta_smo - theta_e), cos(theta_smo - theta_e));
     
     %% ============== 数据存储 ==============
     if mod(k, downsample) == 0
@@ -185,6 +219,11 @@ for k = 1:N
         data.Te(store_idx)        = Te;
         data.TL(store_idx)        = TL;
         data.theta_e(store_idx)   = theta_e;
+        data.theta_smo(store_idx) = theta_smo;
+        data.speed_smo(store_idx) = omega_e_smo / motor.pole_pairs * 60 / (2*pi);
+        data.theta_err_smo(store_idx) = theta_err_smo * 180 / pi;
+        data.e_alpha_smo(store_idx) = e_alpha_smo;
+        data.e_beta_smo(store_idx) = e_beta_smo;
         data.sector(store_idx)    = sector;
         data.duty_a(store_idx)    = duty_a;
         data.duty_b(store_idx)    = duty_b;
@@ -213,6 +252,7 @@ figure('Name', 'BLDC FOC控制仿真结果', 'Position', [50 50 1400 900]);
 subplot(3,3,1);
 plot(data.t(idx)*1000, data.speed_ref(idx), 'r--', 'LineWidth', 1.5); hold on;
 plot(data.t(idx)*1000, data.speed_rpm(idx), 'b-', 'LineWidth', 1);
+plot(data.t(idx)*1000, data.speed_smo(idx), 'g-', 'LineWidth', 0.8);
 xlabel('时间 [ms]');
 ylabel('转速 [rpm]');
 title('转速响应');
@@ -272,7 +312,8 @@ grid on;
 
 %% 子图7: 电角度
 subplot(3,3,7);
-plot(data.t(idx)*1000, data.theta_e(idx)*180/pi, 'b-', 'LineWidth', 0.8);
+plot(data.t(idx)*1000, data.theta_e(idx)*180/pi, 'b-', 'LineWidth', 0.8); hold on;
+plot(data.t(idx)*1000, data.theta_smo(idx)*180/pi, 'g-', 'LineWidth', 0.8);
 xlabel('时间 [ms]');
 ylabel('角度 [deg]');
 title('电角度');
@@ -342,6 +383,33 @@ axis equal; grid on;
 sgtitle('电流矢量分析', 'FontSize', 14, 'FontWeight', 'bold');
 
 %% 性能指标统计
+figure('Name', 'SMO Observer Results', 'Position', [150 150 1000 700]);
+
+subplot(3,1,1);
+plot(data.t(idx)*1000, data.speed_rpm(idx), 'b-', 'LineWidth', 1); hold on;
+plot(data.t(idx)*1000, data.speed_smo(idx), 'g-', 'LineWidth', 0.8);
+xlabel('Time [ms]');
+ylabel('Speed [rpm]');
+title('SMO speed estimation');
+legend('Actual speed', 'SMO estimated speed', 'Location', 'best');
+grid on;
+
+subplot(3,1,2);
+plot(data.t(idx)*1000, data.theta_err_smo(idx), 'm-', 'LineWidth', 0.8);
+xlabel('Time [ms]');
+ylabel('Angle error [deg]');
+title('SMO electrical angle error');
+grid on;
+
+subplot(3,1,3);
+plot(data.t(idx)*1000, data.e_alpha_smo(idx), 'b-', 'LineWidth', 0.8); hold on;
+plot(data.t(idx)*1000, data.e_beta_smo(idx), 'r-', 'LineWidth', 0.8);
+xlabel('Time [ms]');
+ylabel('Back-EMF [V]');
+title('SMO estimated back-EMF');
+legend('e_\alpha', 'e_\beta', 'Location', 'best');
+grid on;
+
 fprintf('\n============================================\n');
 fprintf('  仿真性能指标\n');
 fprintf('============================================\n');
@@ -359,6 +427,10 @@ fprintf('  稳态iq: %.4f A\n', mean(data.iq(ss_idx)));
 fprintf('  稳态转矩: %.4f Nm\n', mean(data.Te(ss_idx)));
 fprintf('  三相电流幅值(稳态): %.4f A\n', ...
     max(data.ia(ss_idx)));
+fprintf('  SMO稳态速度估计误差: %.2f rpm\n', ...
+    mean(abs(data.speed_smo(ss_idx) - data.speed_rpm(ss_idx))));
+fprintf('  SMO稳态电角度误差: %.2f deg\n', ...
+    mean(abs(data.theta_err_smo(ss_idx))));
 fprintf('============================================\n');
 
 fprintf('\n仿真结果已绘制完毕！\n');
